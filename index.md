@@ -1,10 +1,10 @@
 # My Project
 Made for Game Engines Fall 2026
 
-Check out my: 
+Check out my projects:
 
 [Readme File](README.md)
 
-[GameMaker Projects](GameMakerProjects)
+[GameMaker Projects](GameMakerProjects/)
 
-[Babylon.js Projects](ArenaRoids.html)
+[Babylon.js Projects](BabylonJSProjects/)
