@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ArenaRoids</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #02040d; }
+    #renderCanvas { width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
+    #hud { position: fixed; inset: 0; pointer-events: none; color: #edfaff; text-shadow: 0 0 12px #53ddff99; }
+    .stats { position: absolute; top: 20px; left: 22px; display: flex; gap: 26px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    .stat { color: #9cabc2; font-size: 12px; }
+    .stat span { display: block; margin-top: 3px; color: #72e8ff; font-size: 25px; letter-spacing: .04em; }
+    #chargeBox { position: absolute; top: 86px; left: 22px; width: 145px; }
+    #chargeLabel { margin-bottom: 5px; color: #9cabc2; font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+    #chargeTrack { height: 5px; overflow: hidden; border: 1px solid #63dcff77; border-radius: 4px; }
+    #charge { width: 100%; height: 100%; background: #6ae6ff; box-shadow: 0 0 10px #52dcff; transform-origin: left; }
+    #crosshair { position: absolute; top: 50%; left: 50%; width: 34px; height: 34px; transform: translate(-50%, -50%); }
+    #crosshair::before, #crosshair::after { content: ""; position: absolute; background: #d9faff; box-shadow: 0 0 8px #42d8ff; }
+    #crosshair::before { top: 16px; left: 0; width: 34px; height: 2px; }
+    #crosshair::after { top: 0; left: 16px; width: 2px; height: 34px; }
+    #crosshair i { position: absolute; inset: 10px; border: 1px solid #ff5ea8; border-radius: 50%; box-shadow: 0 0 7px #ff2e8b; }
+    #controls { position: absolute; right: 22px; bottom: 18px; color: #94a3ba; font-size: 12px; letter-spacing: .06em; text-align: right; }
+    #overlay { position: absolute; inset: 0; display: grid; place-items: center; background: #01030abb; backdrop-filter: blur(5px); pointer-events: auto; }
+    #overlay.hidden { display: none; }
+    .panel { width: min(500px, calc(100vw - 34px)); padding: 36px; border: 1px solid #5edfff66; border-radius: 18px; background: linear-gradient(145deg, #11192eee, #070b18ee); box-shadow: 0 0 60px #188db133; text-align: center; }
+    .panel h1 { margin: 0 0 12px; color: #78eaff; font-size: clamp(35px, 7vw, 58px); letter-spacing: .08em; line-height: 1; }
+    .panel.win h1 { color: #8affc9; text-shadow: 0 0 18px #23d990; }
+    .panel.lose h1 { color: #ff74ab; text-shadow: 0 0 18px #e72c78; }
+    .panel p { margin: 10px 0 24px; color: #c1ccdc; line-height: 1.55; }
+    button { padding: 12px 25px; border: 0; border-radius: 999px; background: #69e3ff; color: #06101d; font: inherit; font-weight: 900; letter-spacing: .08em; cursor: pointer; pointer-events: auto; }
+    button:hover { background: #fff; transform: translateY(-1px); }
+  </style>
+</head>
+<body>
+  <canvas id="renderCanvas" tabindex="0" aria-label="ArenaRoids first-person game"></canvas>
+  <div id="hud">
+    <div class="stats">
+      <div class="stat">Score <span id="score">0</span></div>
+      <div class="stat">Targets <span id="targets">12</span></div>
+    </div>
+    <div id="chargeBox"><div id="chargeLabel">SHOT READY</div><div id="chargeTrack"><div id="charge"></div></div></div>
+    <div id="crosshair"><i></i></div>
+    <div id="controls">DRAG MOUSE OR USE WASD / ARROWS TO AIM<br>CLICK OR SPACE TO FIRE</div>
+    <div id="overlay">
+      <div class="panel" id="panel">
+        <h1 id="title">ARENAROIDS</h1>
+        <p id="message">You are at the center of a 3D arena. Aim in any direction and destroy all 12 asteroids before one reaches you.</p>
+        <button id="actionButton" type="button">START GAME</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.babylonjs.com/babylon.js"></script>
+  <script>
+    "use strict";
+
+    const ARENA_RADIUS = 24;
+    const ASTEROID_COUNT = 12;
+    const ATTACKER_COUNT = 3;
+    const SHOT_COOLDOWN = 0.3;
+    const canvas = document.getElementById("renderCanvas");
+    const scoreText = document.getElementById("score");
+    const targetsText = document.getElementById("targets");
+    const charge = document.getElementById("charge");
+    const chargeLabel = document.getElementById("chargeLabel");
+    const overlay = document.getElementById("overlay");
+    const panel = document.getElementById("panel");
+    const titleText = document.getElementById("title");
+    const messageText = document.getElementById("message");
+    const actionButton = document.getElementById("actionButton");
+
+    const engine = new BABYLON.Engine(canvas, true, { antialias: true });
+    const scene = new BABYLON.Scene(engine);
+    scene.clearColor = new BABYLON.Color4(0.004, 0.008, 0.025, 1);
+    scene.ambientColor = new BABYLON.Color3(0.12, 0.16, 0.28);
+
+    const camera = new BABYLON.UniversalCamera("playerCamera", BABYLON.Vector3.Zero(), scene);
+    camera.minZ = 0.08;
+    camera.maxZ = 80;
+    camera.fov = 1;
+    camera.inputs.clear();
+    scene.activeCamera = camera;
+
+    const centerLight = new BABYLON.PointLight("centerLight", BABYLON.Vector3.Zero(), scene);
+    centerLight.diffuse = new BABYLON.Color3(0.55, 0.75, 1);
+    centerLight.intensity = 1.25;
+    centerLight.range = 45;
+    const glow = new BABYLON.GlowLayer("glow", scene, { blurKernelSize: 28 });
+    glow.intensity = 0.8;
+
+    function makeMaterial(name, diffuse, emissive) {
+      const mat = new BABYLON.StandardMaterial(name, scene);
+      mat.diffuseColor = BABYLON.Color3.FromHexString(diffuse);
+      mat.emissiveColor = BABYLON.Color3.FromHexString(emissive || "#000000");
+      mat.specularColor = BABYLON.Color3.Black();
+      return mat;
+    }
+
+    const arenaMaterial = makeMaterial("arenaMaterial", "#0b3150", "#06213a");
+    arenaMaterial.wireframe = true;
+    arenaMaterial.alpha = 0.17;
+    arenaMaterial.backFaceCulling = false;
+    const asteroidMaterial = makeMaterial("asteroidMaterial", "#80788e", "#151322");
+    const attackerMaterial = makeMaterial("attackerMaterial", "#a64e78", "#4d112f");
+    const bulletMaterial = makeMaterial("bulletMaterial", "#fff7b0", "#ffbf28");
+    const gunMaterial = makeMaterial("gunMaterial", "#9ceeff", "#135e7a");
+    const accentMaterial = makeMaterial("accentMaterial", "#ff5ca6", "#a91659");
+
+    const arena = BABYLON.MeshBuilder.CreateSphere("arena", {
+      diameter: ARENA_RADIUS * 2,
+      segments: 28,
+      sideOrientation: BABYLON.Mesh.BACKSIDE
+    }, scene);
+    arena.material = arenaMaterial;
+    arena.isPickable = false;
+
+    const gun = new BABYLON.TransformNode("gun", scene);
+    gun.parent = camera;
+    gun.position.set(0.52, -0.38, 1.05);
+    const barrel = BABYLON.MeshBuilder.CreateCylinder("barrel", { height: 1.15, diameter: 0.17, tessellation: 10 }, scene);
+    barrel.parent = gun;
+    barrel.rotation.x = Math.PI / 2;
+    barrel.material = gunMaterial;
+    const muzzle = BABYLON.MeshBuilder.CreateTorus("muzzle", { diameter: 0.24, thickness: 0.055, tessellation: 12 }, scene);
+    muzzle.parent = gun;
+    muzzle.rotation.x = Math.PI / 2;
+    muzzle.position.z = 0.57;
+    muzzle.material = accentMaterial;
+
+    const keys = new Set();
+    const bullets = [];
+    const asteroids = [];
+    const sparks = [];
+    let audioContext = null;
+    let playing = false;
+    let score = 0;
+    let shotTimer = 0;
+    let lastCollisionSound = 0;
+    let lastWallSound = 0;
+    let dragging = false;
+    let dragX = 0;
+    let dragY = 0;
+    let dragDistance = 0;
+
+    function initAudio() {
+      if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioContext.state === "suspended") audioContext.resume();
+    }
+
+    function tone(startFrequency, endFrequency, duration, volume, type, delay) {
+      if (!audioContext) return;
+      const start = audioContext.currentTime + (delay || 0);
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      oscillator.type = type || "sine";
+      oscillator.frequency.setValueAtTime(startFrequency, start);
+      oscillator.frequency.exponentialRampToValueAtTime(Math.max(20, endFrequency), start + duration);
+      gain.gain.setValueAtTime(volume, start);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + duration);
+      oscillator.connect(gain).connect(audioContext.destination);
+      oscillator.start(start);
+      oscillator.stop(start + duration);
+    }
+
+    function noise(duration, volume, filterFrequency) {
+      if (!audioContext) return;
+      const length = Math.floor(audioContext.sampleRate * duration);
+      const buffer = audioContext.createBuffer(1, length, audioContext.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < length; i += 1) data[i] = Math.random() * 2 - 1;
+      const source = audioContext.createBufferSource();
+      const filter = audioContext.createBiquadFilter();
+      const gain = audioContext.createGain();
+      filter.type = "lowpass";
+      filter.frequency.value = filterFrequency;
+      gain.gain.setValueAtTime(volume, audioContext.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration);
+      source.buffer = buffer;
+      source.connect(filter).connect(gain).connect(audioContext.destination);
+      source.start();
+    }
+
+    const sounds = {
+      shoot() { tone(620, 190, 0.09, 0.1, "square"); },
+      hit() { tone(880, 420, 0.055, 0.055, "square"); },
+      destroy() { noise(0.2, 0.12, 900); tone(170, 55, 0.2, 0.1, "sawtooth"); },
+      collide() { tone(105, 55, 0.07, 0.045, "triangle"); },
+      accelerate() { tone(170, 360, 0.1, 0.045, "sawtooth"); },
+      win() { tone(392, 392, 0.16, 0.09, "sine"); tone(523, 523, 0.16, 0.09, "sine", 0.17); tone(659, 659, 0.32, 0.11, "sine", 0.34); },
+      die() { noise(0.5, 0.14, 500); tone(240, 45, 0.7, 0.12, "sawtooth"); }
+    };
+
+    function randomUnitVector() {
+      const vector = new BABYLON.Vector3(Math.random() * 2 - 1, Math.random() * 2 - 1, Math.random() * 2 - 1);
+      return vector.lengthSquared() < 0.001 ? new BABYLON.Vector3(1, 0, 0) : vector.normalize();
+    }
+
+    function spawnAsteroid(index) {
+      const radius = 1.05 + Math.random() * 0.9;
+      const attacker = index < ATTACKER_COUNT;
+      const mesh = BABYLON.MeshBuilder.CreateIcoSphere(`asteroid-${index}`, { radius, subdivisions: 2, flat: true }, scene);
+      mesh.material = attacker ? attackerMaterial : asteroidMaterial;
+      mesh.scaling.set(0.8 + Math.random() * 0.35, 0.8 + Math.random() * 0.35, 0.8 + Math.random() * 0.35);
+      mesh.position.copyFrom(randomUnitVector().scale(9 + Math.random() * 11));
+      const speed = 2.1 + Math.random() * 1.7;
+      const randomDirection = randomUnitVector();
+      const directionToPlayer = mesh.position.scale(-1).normalize();
+      const direction = attacker
+        ? directionToPlayer.scale(0.72).add(randomDirection.scale(0.28)).normalize()
+        : randomDirection;
+      asteroids.push({
+        mesh,
+        attacker,
+        radius: radius * 1.05,
+        velocity: direction.scale(speed),
+        spin: randomUnitVector().scale(0.4 + Math.random())
+      });
+    }
+
+    function clearObjects(list) {
+      list.forEach((item) => item.mesh.dispose());
+      list.length = 0;
+    }
+
+    function removeObject(list, index) {
+      list[index].mesh.dispose();
+      list.splice(index, 1);
+    }
+
+    function cameraForward() {
+      return camera.getDirection(BABYLON.Axis.Z).normalize();
+    }
+
+    function shoot() {
+      if (!playing || shotTimer > 0) return;
+      const direction = cameraForward();
+      const bullet = BABYLON.MeshBuilder.CreateSphere("projectile", { diameter: 0.28, segments: 7 }, scene);
+      bullet.material = bulletMaterial;
+      bullet.position.copyFrom(direction.scale(1.35));
+      bullets.push({ mesh: bullet, velocity: direction.scale(22), life: 1.35, radius: 0.14 });
+      shotTimer = SHOT_COOLDOWN;
+      muzzle.scaling.setAll(1.65);
+      sounds.shoot();
+    }
+
+    function burst(position) {
+      for (let i = 0; i < 9; i += 1) {
+        const mesh = BABYLON.MeshBuilder.CreateSphere("spark", { diameter: 0.12, segments: 3 }, scene);
+        mesh.material = accentMaterial;
+        mesh.position.copyFrom(position);
+        sparks.push({ mesh, velocity: randomUnitVector().scale(3 + Math.random() * 5), life: 0.45 });
+      }
+    }
+
+    function updateAiming(delta) {
+      const turnSpeed = 1.65;
+      if (keys.has("KeyA") || keys.has("ArrowLeft")) camera.rotation.y -= turnSpeed * delta;
+      if (keys.has("KeyD") || keys.has("ArrowRight")) camera.rotation.y += turnSpeed * delta;
+      if (keys.has("KeyW") || keys.has("ArrowUp")) camera.rotation.x -= turnSpeed * delta;
+      if (keys.has("KeyS") || keys.has("ArrowDown")) camera.rotation.x += turnSpeed * delta;
+      camera.rotation.x = BABYLON.Scalar.Clamp(camera.rotation.x, -Math.PI / 2 + 0.02, Math.PI / 2 - 0.02);
+      if (keys.has("Space")) shoot();
+      shotTimer = Math.max(0, shotTimer - delta);
+      const ready = 1 - shotTimer / SHOT_COOLDOWN;
+      charge.style.transform = `scaleX(${ready})`;
+      chargeLabel.textContent = ready >= 1 ? "SHOT READY" : "RECHARGING";
+      muzzle.scaling.setAll(BABYLON.Scalar.Lerp(muzzle.scaling.x, 1, Math.min(1, delta * 18)));
+    }
+
+    function updateBullets(delta) {
+      for (let i = bullets.length - 1; i >= 0; i -= 1) {
+        const bullet = bullets[i];
+        bullet.mesh.position.addInPlace(bullet.velocity.scale(delta));
+        bullet.life -= delta;
+        let hit = false;
+        for (let j = asteroids.length - 1; j >= 0; j -= 1) {
+          const asteroid = asteroids[j];
+          const range = asteroid.radius + bullet.radius;
+          if (BABYLON.Vector3.DistanceSquared(bullet.mesh.position, asteroid.mesh.position) <= range * range) {
+            burst(asteroid.mesh.position);
+            removeObject(asteroids, j);
+            removeObject(bullets, i);
+            score += 100;
+            scoreText.textContent = score;
+            targetsText.textContent = asteroids.length;
+            sounds.hit();
+            sounds.destroy();
+            hit = true;
+            if (asteroids.length === 0) finishGame(true);
+            break;
+          }
+        }
+        if (!hit && (bullet.life <= 0 || bullet.mesh.position.length() >= ARENA_RADIUS)) removeObject(bullets, i);
+      }
+    }
+
+    function resolveAsteroidCollisions(now) {
+      for (let i = 0; i < asteroids.length; i += 1) {
+        for (let j = i + 1; j < asteroids.length; j += 1) {
+          const a = asteroids[i];
+          const b = asteroids[j];
+          const difference = b.mesh.position.subtract(a.mesh.position);
+          const minDistance = a.radius + b.radius;
+          const distanceSquared = difference.lengthSquared();
+          if (distanceSquared > 0 && distanceSquared < minDistance * minDistance) {
+            const distance = Math.sqrt(distanceSquared);
+            const normal = difference.scale(1 / distance);
+            const closingSpeed = a.velocity.subtract(b.velocity).dot(normal);
+            if (closingSpeed > 0) {
+              a.velocity.subtractInPlace(normal.scale(closingSpeed));
+              b.velocity.addInPlace(normal.scale(closingSpeed));
+            }
+            const correction = normal.scale((minDistance - distance) * 0.51);
+            a.mesh.position.subtractInPlace(correction);
+            b.mesh.position.addInPlace(correction);
+            if (now - lastCollisionSound > 90) {
+              sounds.collide();
+              lastCollisionSound = now;
+            }
+          }
+        }
+      }
+    }
+
+    function updateAsteroids(delta, now) {
+      for (const asteroid of asteroids) {
+        asteroid.mesh.position.addInPlace(asteroid.velocity.scale(delta));
+        asteroid.mesh.rotation.x += asteroid.spin.x * delta;
+        asteroid.mesh.rotation.y += asteroid.spin.y * delta;
+        asteroid.mesh.rotation.z += asteroid.spin.z * delta;
+
+        const distance = asteroid.mesh.position.length();
+        if (distance + asteroid.radius >= ARENA_RADIUS) {
+          const normal = asteroid.mesh.position.normalizeToNew();
+          const outwardSpeed = asteroid.velocity.dot(normal);
+          if (outwardSpeed > 0) asteroid.velocity.subtractInPlace(normal.scale(2 * outwardSpeed)).scaleInPlace(1.06);
+          if (asteroid.attacker) {
+            const speed = asteroid.velocity.length();
+            const directionToPlayer = asteroid.mesh.position.scale(-1).normalize();
+            asteroid.velocity = asteroid.velocity.normalize().scale(0.78)
+              .add(directionToPlayer.scale(0.22)).normalize().scale(speed);
+          }
+          if (asteroid.velocity.length() > 9) asteroid.velocity.normalize().scaleInPlace(9);
+          asteroid.mesh.position.copyFrom(normal.scale(ARENA_RADIUS - asteroid.radius - 0.05));
+          if (now - lastWallSound > 100) {
+            sounds.accelerate();
+            lastWallSound = now;
+          }
+        }
+
+        const playerRange = asteroid.radius + 0.7;
+        if (asteroid.mesh.position.lengthSquared() <= playerRange * playerRange) {
+          burst(BABYLON.Vector3.Zero());
+          finishGame(false);
+          return;
+        }
+      }
+      resolveAsteroidCollisions(now);
+    }
+
+    function updateSparks(delta) {
+      for (let i = sparks.length - 1; i >= 0; i -= 1) {
+        const spark = sparks[i];
+        spark.mesh.position.addInPlace(spark.velocity.scale(delta));
+        spark.mesh.scaling.scaleInPlace(0.94);
+        spark.life -= delta;
+        if (spark.life <= 0) removeObject(sparks, i);
+      }
+    }
+
+    function showOverlay(title, message, button, stateClass) {
+      titleText.textContent = title;
+      messageText.textContent = message;
+      actionButton.textContent = button;
+      panel.className = `panel ${stateClass || ""}`;
+      overlay.classList.remove("hidden");
+      actionButton.focus();
+    }
+
+    function finishGame(won) {
+      if (!playing) return;
+      playing = false;
+      keys.clear();
+      if (won) {
+        sounds.win();
+        showOverlay("YOU WIN", `Arena cleared! Final score: ${score}`, "PLAY AGAIN", "win");
+      } else {
+        sounds.die();
+        showOverlay("GAME OVER", `An asteroid reached your ship. Final score: ${score}`, "START AGAIN", "lose");
+      }
+    }
+
+    function startGame() {
+      initAudio();
+      clearObjects(bullets);
+      clearObjects(asteroids);
+      clearObjects(sparks);
+      camera.position.set(0, 0, 0);
+      camera.rotation.set(0, 0, 0);
+      score = 0;
+      shotTimer = 0;
+      scoreText.textContent = score;
+      for (let i = 0; i < ASTEROID_COUNT; i += 1) spawnAsteroid(i);
+      targetsText.textContent = asteroids.length;
+      playing = true;
+      overlay.classList.add("hidden");
+      canvas.focus();
+    }
+
+    actionButton.addEventListener("click", startGame);
+    canvas.addEventListener("pointerdown", (event) => {
+      if (!playing) return;
+      initAudio();
+      dragging = true;
+      dragX = event.clientX;
+      dragY = event.clientY;
+      dragDistance = 0;
+      canvas.setPointerCapture(event.pointerId);
+    });
+    canvas.addEventListener("pointermove", (event) => {
+      if (!playing || !dragging) return;
+      const moveX = event.clientX - dragX;
+      const moveY = event.clientY - dragY;
+      dragDistance += Math.abs(moveX) + Math.abs(moveY);
+      camera.rotation.y += moveX * 0.004;
+      camera.rotation.x += moveY * 0.004;
+      camera.rotation.x = BABYLON.Scalar.Clamp(camera.rotation.x, -Math.PI / 2 + 0.02, Math.PI / 2 - 0.02);
+      dragX = event.clientX;
+      dragY = event.clientY;
+    });
+    canvas.addEventListener("pointerup", (event) => {
+      if (!dragging) return;
+      dragging = false;
+      canvas.releasePointerCapture(event.pointerId);
+      if (dragDistance < 6) shoot();
+    });
+    canvas.addEventListener("pointercancel", () => { dragging = false; });
+    window.addEventListener("keydown", (event) => {
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(event.code)) event.preventDefault();
+      keys.add(event.code);
+      if (event.code === "Space") shoot();
+    });
+    window.addEventListener("keyup", (event) => keys.delete(event.code));
+    window.addEventListener("blur", () => keys.clear());
+
+    engine.runRenderLoop(() => {
+      const delta = Math.min(engine.getDeltaTime() / 1000, 0.04);
+      const now = performance.now();
+      if (playing) {
+        updateAiming(delta);
+        updateBullets(delta);
+        if (playing) updateAsteroids(delta, now);
+      }
+      updateSparks(delta);
+      scene.render();
+    });
+    window.addEventListener("resize", () => engine.resize());
+  </script>
+</body>
+</html>
