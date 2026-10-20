@@ -1,0 +1,6 @@
+title: Game Engines
+description: Course projects for Fall 2026
+theme: jekyll-theme-primer
+exclude:
+  - tools
+  - GodotProjects/MeadowHop/RESUME.md

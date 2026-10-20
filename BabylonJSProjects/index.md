@@ -1,3 +1,8 @@
+---
+layout: default
+title: Babylon.js Projects
+---
+
 # Babylon.js Projects
 
 [Back to the Game Engines homepage](../)

@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://d07xgf0htwe6n"]
+
+[ext_resource type="Script" uid="uid://b1kundwqjfucg" path="res://scripts/game.gd" id="1"]
+
+[node name="MeadowHop" type="Node2D" unique_id=1393870513]
+script = ExtResource("1")
